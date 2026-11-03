@@ -63,7 +63,8 @@
       "name": "HTTP Request",
       "retryOnFail": true,
       "maxTries": 5,
-      "waitBetweenTries": 5000
+      "waitBetweenTries": 5000,
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
@@ -155,6 +156,34 @@
       ],
       "id": "adz-set",
       "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Adzuna still failing after 5 retries (usually a 503).\n// Return no postings for this search so the other searches carry on.\nreturn [];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        208
+      ],
+      "id": "adz-skip",
+      "name": "Skip Failed Search"
+    },
+    {
+      "parameters": {
+        "content": "⚠️ If Adzuna still fails after 5 retries (usually a 503),\nthis search returns nothing and the other searches carry on,\ninstead of the whole morning run failing.",
+        "width": 420,
+        "height": 180
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        160,
+        160
+      ],
+      "id": "adz-note",
+      "name": "Sticky Note"
     }
   ],
   "connections": {
@@ -174,6 +203,13 @@
         [
           {
             "node": "Split Out",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip Failed Search",
             "type": "main",
             "index": 0
           }

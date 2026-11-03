@@ -606,6 +606,7 @@
     }
   },
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "errorWorkflow": "REPLACE_WITH_FAILURE_ALERT_WORKFLOW_ID"
   }
 }

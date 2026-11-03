@@ -1,0 +1,75 @@
+{
+  "name": "Job Sourcing - Failure Alert",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "err-trigger",
+      "name": "When a Job Workflow Fails"
+    },
+    {
+      "parameters": {
+        "resource": "message",
+        "operation": "send",
+        "sendTo": "you@example.com",
+        "subject": "=⚠️ {{ $json.workflow.name }} failed",
+        "emailType": "html",
+        "message": "=<p><b>{{ $json.workflow.name }}</b> failed at {{ $now.toFormat(\"HH:mm, d MMM yyyy\") }}.</p><p>Failed node: <b>{{ $json.execution.lastNodeExecuted || \"unknown\" }}</b><br>Error: {{ ($json.execution.error?.message || \"no message\").replace(/</g, \"&lt;\") }}</p><p><a href=\"{{ $json.execution.url }}\">Open the execution in n8n</a></p><p>If this was the 08:00 run, the digest for that day was not sent. You can re-run the orchestrator from n8n once the cause is fixed.</p>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "err-gmail",
+      "name": "Email Failure Alert",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_ME",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 🚨 FAILURE ALERT\nSet as the error workflow on the Job Sourcing orchestrator and feedback workflows. Any failed production run emails what failed and a link to the execution.",
+        "color": 3,
+        "width": 440,
+        "height": 300
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -120
+      ],
+      "id": "err-note",
+      "name": "Sticky Note"
+    }
+  ],
+  "connections": {
+    "When a Job Workflow Fails": {
+      "main": [
+        [
+          {
+            "node": "Email Failure Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

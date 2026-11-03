@@ -173,6 +173,8 @@ One design problem was caught before it shipped:
 ## Error handling
 
 - **Adzuna and Supabase reads** retry 5 times, 5 seconds apart.
+- **An Adzuna outage skips one search, not the run.** If a search still fails after 5 retries (Adzuna returns intermittent 503s), its error branch returns no postings and the other searches carry on. Before this, a single 503 stopped the whole 08:00 run, which happened on several mornings in late Oct and early Nov 2026.
+- **Failed runs send an email.** `workflows/job-sourcing-failure-alert.json` is set as the error workflow on the orchestrator and the feedback workflow. A failed production run emails the workflow, the failing node, the error and a link to the execution.
 - **Duplicate inserts** don't stop the run. The insert node continues on error, so a 409 from the unique constraint skips that posting.
 - **Empty filter output** still lets the run continue (Always Output Data on the filter node).
 - **LLM output** is parsed defensively: code fences are stripped before `JSON.parse`.
@@ -183,7 +185,7 @@ One design problem was caught before it shipped:
 
 ## Limitations and next steps
 
-- **Adzuna outages fail the whole run.** Adzuna returns intermittent 503s, and the sub-workflow call has no error tolerance, so one outage during the 08:00 run stops it. Next: continue on error at the call node, longer backoff, and a failure alert.
+- **A skipped search is silent.** When Adzuna is down for one search, the digest is just shorter; nothing says a search was skipped. Next: list skipped searches at the bottom of the digest. If Adzuna is down for every search, no new postings arrive that day.
 - **Salaries are often Adzuna's estimate**, not the employer's, so the salary floor can wrongly include or exclude roles.
 - **Reposts** come back with new IDs and are treated as new. Next: before scoring, drop postings whose company + title matches a row already marked `applied` or `not_interested`.
 - **Not interested isn't used yet.** It's recorded, but nothing learns from it. Next: feed those rows back as negative examples in the scoring prompt.
@@ -198,7 +200,7 @@ One design problem was caught before it shipped:
 
 1. Create a Supabase project and run `sql/job_postings.sql` in the SQL editor. If you already run v1, run `sql/002_feedback_columns.sql` instead.
 2. Get an Adzuna app id and key from developer.adzuna.com.
-3. In n8n, import `workflows/source-adzuna.json`, `workflows/job-sourcing-orchestrator.json` and `workflows/job-sourcing-feedback.json`.
+3. In n8n, import `workflows/source-adzuna.json`, `workflows/job-sourcing-orchestrator.json`, `workflows/job-sourcing-feedback.json` and `workflows/job-sourcing-failure-alert.json`.
 4. In the Adzuna HTTP Request node, replace `YOUR_ADZUNA_APP_ID` and `YOUR_ADZUNA_APP_KEY`.
 5. Create credentials for Supabase (project URL + service role key), Anthropic API and Gmail OAuth2, and select them on the nodes.
 6. In the orchestrator, point **Call 'Source - Adzuna'** at your imported sub-workflow, set the recipient in **Send Daily Digest Email**, and replace `[CANDIDATE PROFILE: …]` in **Score Fit via Claude API**.
@@ -207,7 +209,8 @@ One design problem was caught before it shipped:
    - Pick a random secret and replace `YOUR_FEEDBACK_SECRET` in **Sign Feedback Links** (orchestrator) and in **Normalise Link** and **Normalise Confirm** (feedback workflow). All three must match.
    - In **Build Email Body**, replace `YOUR-N8N-HOST` with your n8n host (e.g. `yourname.app.n8n.cloud`).
    - In Notion, create an internal integration, share your job pipeline database with it, and add it in n8n as a Notion API credential. Replace `YOUR_NOTION_DATA_SOURCE_ID` in **Add to Notion Job Pipeline** and check the property names match your database (Company, Role, Stage with an "Applied" option, Decision, Application link, Salary range, Fit rationale, Last contact date).
-9. Publish the feedback workflow, then the orchestrator.
+9. Set the recipient in **Email Failure Alert** and publish the failure alert workflow. In the orchestrator's and feedback workflow's settings, choose it as the **Error workflow**.
+10. Publish the feedback workflow, then the orchestrator.
 
 `sample-data/postings.sample.json` holds 24 fictional postings in the normalised shape (including duplicates, junior titles, low salaries and off-location roles). You can pin it to the loop input to test the pipeline without calling Adzuna.
 
