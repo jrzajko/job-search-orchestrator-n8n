@@ -149,6 +149,24 @@ Neither showed up as a failed node. Both looked like success until the numbers w
 - **Scores vary slightly between runs**, and the ≥ 4 cut-off is a judgement call, not tuned.
 - **One source so far.** Next: add Reed or a similar aggregator as a second sub-workflow.
 
+### Planned improvement: Applied / Not interested buttons in the digest
+
+The `emailed` flag stops the same posting being sent twice, but the pipeline has no idea what I did with it. A repost with a new ID, or the same role listed by a recruiter, comes back as new, and the scorer never learns which roles I actually wanted.
+
+The plan is two links under each posting in the digest:
+
+```
+[ Applied ]   [ Not interested ]
+   → n8n Webhook  ?source=adzuna&external_id=…&action=applied|not_interested
+   → Supabase: set status + status_at on that row
+   → return a small "Marked as applied" confirmation page
+```
+
+- **Schema:** add `status text` (`new`, `applied`, `not_interested`) and `status_at timestamptz` to `job_postings`.
+- **Suppression:** before scoring, drop postings whose company + title matches a row already marked `applied` or `not_interested`. This also catches reposts.
+- **Feedback loop:** the `not_interested` rows become negative examples for the scoring prompt or for new exclusion keywords.
+- **Safety:** email security scanners prefetch links, so a plain GET could mark roles by accident. The link should open a confirmation page that submits the change, and carry a signed token so the webhook can't be hit with guessed IDs.
+
 ---
 
 ## Setup
