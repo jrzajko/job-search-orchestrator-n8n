@@ -1,0 +1,552 @@
+{
+  "name": "Job Sourcing - Orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -512,
+        128
+      ],
+      "id": "n-schedule",
+      "name": "Schedule Trigger"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  { searchTerm: \"solutions consultant\", location: \"london\" },\n  { searchTerm: \"solutions consultant\", location: \"remote\" },\n  { searchTerm: \"ai solutions engineer\", location: \"london\" },\n  { searchTerm: \"solutions engineer\", location: \"london\" },\n  { searchTerm: \"business automation lead\", location: \"uk\" },\n  { searchTerm: \"enterprise csm\", location: \"london\" },\n  { searchTerm: \"customer success manager\", location: \"london\" },\n  { searchTerm: \"presales consultant\", location: \"london\" }\n].map(item => ({ json: item }));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        128
+      ],
+      "id": "n-matrix",
+      "name": "Build Search Matrix"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "REPLACE_WITH_SOURCE_ADZUNA_WORKFLOW_ID",
+          "mode": "list",
+          "cachedResultName": "Source - Adzuna"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "searchTerm": "={{ $json.searchTerm }}",
+            "location": "={{ $json.location }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "searchTerm",
+              "displayName": "searchTerm",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "location",
+              "displayName": "location",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
+        },
+        "mode": "each",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        -16,
+        128
+      ],
+      "id": "n-call-adzuna",
+      "name": "Call 'Source - Adzuna'"
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        }
+      },
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        256,
+        128
+      ],
+      "id": "n-loop",
+      "name": "Loop: Insert One at a Time"
+    },
+    {
+      "parameters": {
+        "tableId": "job_postings",
+        "dataToSend": "autoMapInputData"
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        576,
+        144
+      ],
+      "id": "n-insert",
+      "name": "Insert Posting (Dedupe)",
+      "onError": "continueRegularOutput",
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: {} }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        912,
+        -208
+      ],
+      "id": "n-collapse",
+      "name": "Collapse Loop to Single Trigger"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableId": "job_postings",
+        "returnAll": true,
+        "filters": {
+          "conditions": [
+            {
+              "condition": "eq",
+              "keyName": "emailed",
+              "keyValue": "false"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1232,
+        -208
+      ],
+      "id": "n-get",
+      "name": "Get Unprocessed Postings",
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const targetKeywords = [\n  \"solutions consultant\", \"solution consultant\", \"solutions engineer\",\n  \"ai solutions engineer\", \"business automation\", \"enterprise csm\",\n  \"customer success manager\", \"presales consultant\", \"pre-sales consultant\",\n  \"adoption strategist\"\n];\n\nconst excludeKeywords = [\"junior\", \"graduate\", \"intern\", \"apprentice\"];\nconst salaryFloor = 75000;\n\nreturn items.filter(item => {\n  const title = (item.json.title || \"\").toLowerCase();\n  const location = (item.json.location || \"\").toLowerCase();\n  const salaryMax = Number(item.json.salary_max) || 0;\n\n  const matchesTarget = targetKeywords.some(kw => title.includes(kw));\n  const isExcluded = excludeKeywords.some(kw => title.includes(kw));\n  const meetsSalary = salaryMax >= salaryFloor;\n  const validLocation = location.includes(\"london\") || location.includes(\"remote\") || location.includes(\"uk\");\n\n  return matchesTarget && !isExcluded && meetsSalary && validLocation;\n});\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1440,
+        -208
+      ],
+      "id": "n-filter",
+      "name": "Filter: Keyword + Salary + Location",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "= {\n  \"model\": \"claude-haiku-4-5-20251001\",\n  \"max_tokens\": 200,\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"Score this job posting's fit (1-5, 5=excellent) for this candidate: [CANDIDATE PROFILE: years of experience, past roles, location, target role titles, target company types, salary floor]. Respond with ONLY valid JSON, no other text: {\\\"score\\\": <1-5>, \\\"reasoning\\\": \\\"<one sentence>\\\"}. Job posting - Title: {{ $json.title }}. Company: {{ $json.company }}. Location: {{ $json.location }}. Salary: £{{ $json.salary_max }}. Description: {{ $json.description }}\"\n    }\n  ]\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1648,
+        -208
+      ],
+      "id": "n-score",
+      "name": "Score Fit via Claude API",
+      "credentials": {
+        "anthropicApi": {
+          "id": "REPLACE_ME",
+          "name": "Anthropic account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const raw = $json.content[0].text;\nconst cleaned = raw.replace(/```json|```/g, \"\").trim();\nconst parsed = JSON.parse(cleaned);\n\nconst original = $('Filter: Keyword + Salary + Location').item.json;\n\nreturn {\n  external_id: original.external_id,\n  source: original.source,\n  title: original.title,\n  company: original.company,\n  location: original.location,\n  url: original.url,\n  salary_max: original.salary_max,\n  fit_score: parsed.score,\n  fit_reasoning: parsed.reasoning\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1856,
+        -208
+      ],
+      "id": "n-parse",
+      "name": "Parse Score + Merge Job Data"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.filter(item => item.json.fit_score >= 4);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2064,
+        -208
+      ],
+      "id": "n-score-filter",
+      "name": "Filter: Score >= 4"
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = items.map(item => `\n  <h3>${item.json.title} — ${item.json.company}</h3>\n  <p>${item.json.location} | £${item.json.salary_max} | Score: ${item.json.fit_score}/5</p>\n  <p>${item.json.fit_reasoning}</p>\n  <p><a href=\"${item.json.url}\">View posting</a></p>\n  <hr/>\n`).join(\"\");\n\nreturn [{ json: { emailBody: rows, count: items.length } }];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        -208
+      ],
+      "id": "n-email-body",
+      "name": "Build Email Body"
+    },
+    {
+      "parameters": {
+        "sendTo": "you@example.com",
+        "subject": "New Job Opportunities",
+        "message": "={{ $json.emailBody }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        2448,
+        -208
+      ],
+      "id": "n-gmail",
+      "name": "Send Daily Digest Email",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "REPLACE_ME",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "tableId": "job_postings",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "external_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.external_id }}"
+            },
+            {
+              "keyName": "source",
+              "condition": "eq",
+              "keyValue": "={{ $json.source }}"
+            }
+          ]
+        },
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "emailed",
+              "fieldValue": "true"
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        2064,
+        -464
+      ],
+      "id": "n-mark",
+      "name": "Mark Posting as Processed",
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## 📥 SOURCING & DEDUPE\nSearches Adzuna across 8 target role/location combos,\nthen stores every posting in Supabase. Duplicates are\nautomatically rejected: this is the \"collect once\"\nlayer.",
+        "height": 208,
+        "width": 496
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        304
+      ],
+      "id": "note-0",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## 🎯 FILTER, SCORE & EMAIL\nPulls only postings never processed before, filters out\nobvious mismatches for free, scores survivors with Claude\n(1-5), emails only the 4s and 5s, then marks everything\nscored as processed so it's never re-scored tomorrow.",
+        "height": 208,
+        "width": 480
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1216,
+        32
+      ],
+      "id": "note-1",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "⚠️ Required: Supabase's bulk insert fails entirely\nif ANY row is a duplicate. This loop forces one\ninsert at a time so duplicates fail individually.",
+        "height": 96,
+        "width": 400
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        256,
+        352
+      ],
+      "id": "note-2",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "⚠️ The loop's \"done\" output fires once per original\nitem (350x), not once total. This collapses it to a\nsingle trigger so the next node doesn't run 350 times.",
+        "height": 384
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        832,
+        -400
+      ],
+      "id": "note-3",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "⚠️ Must Match = \"All\" conditions, not \"Any\" — matching\nonly on external_id OR source over-matches almost the\nwhole table.",
+        "height": 176,
+        "width": 320
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        -672
+      ],
+      "id": "note-4",
+      "name": "Sticky Note4"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Search Matrix",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Search Matrix": {
+      "main": [
+        [
+          {
+            "node": "Call 'Source - Adzuna'",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call 'Source - Adzuna'": {
+      "main": [
+        [
+          {
+            "node": "Loop: Insert One at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop: Insert One at a Time": {
+      "main": [
+        [
+          {
+            "node": "Collapse Loop to Single Trigger",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert Posting (Dedupe)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Posting (Dedupe)": {
+      "main": [
+        [
+          {
+            "node": "Loop: Insert One at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collapse Loop to Single Trigger": {
+      "main": [
+        [
+          {
+            "node": "Get Unprocessed Postings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Unprocessed Postings": {
+      "main": [
+        [
+          {
+            "node": "Filter: Keyword + Salary + Location",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Keyword + Salary + Location": {
+      "main": [
+        [
+          {
+            "node": "Score Fit via Claude API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Score Fit via Claude API": {
+      "main": [
+        [
+          {
+            "node": "Parse Score + Merge Job Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Score + Merge Job Data": {
+      "main": [
+        [
+          {
+            "node": "Filter: Score >= 4",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Mark Posting as Processed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter: Score >= 4": {
+      "main": [
+        [
+          {
+            "node": "Build Email Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email Body": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Digest Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
