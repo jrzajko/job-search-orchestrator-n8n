@@ -249,12 +249,37 @@
     },
     {
       "parameters": {
-        "jsCode": "const rows = items.map(item => `\n  <h3>${item.json.title} — ${item.json.company}</h3>\n  <p>${item.json.location} | £${item.json.salary_max} | Score: ${item.json.fit_score}/5</p>\n  <p>${item.json.fit_reasoning}</p>\n  <p><a href=\"${item.json.url}\">View posting</a></p>\n  <hr/>\n`).join(\"\");\n\nreturn [{ json: { emailBody: rows, count: items.length } }];\n"
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "fb-token",
+              "name": "feedback_token",
+              "type": "string",
+              "value": "={{ (\"YOUR_FEEDBACK_SECRET|\" + $json.source + \"|\" + $json.external_id).hash(\"sha256\") }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2160,
+        -208
+      ],
+      "id": "n-sign",
+      "name": "Sign Feedback Links"
+    },
+    {
+      "parameters": {
+        "jsCode": "const base = \"https://YOUR-N8N-HOST/webhook/job-feedback\";\n\nconst link = (j, action) =>\n  `${base}?source=${encodeURIComponent(j.source)}&external_id=${encodeURIComponent(j.external_id)}&action=${action}&token=${j.feedback_token}`;\n\nconst button = (href, label, colour) =>\n  `<a href=\"${href}\" style=\"display:inline-block;padding:8px 14px;margin-right:8px;border-radius:6px;background:${colour};color:#ffffff;text-decoration:none;font-size:14px;\">${label}</a>`;\n\nconst rows = items.map(item => {\n  const j = item.json;\n  return `\n  <h3>${j.title} — ${j.company}</h3>\n  <p>${j.location} | £${j.salary_max} | Score: ${j.fit_score}/5</p>\n  <p>${j.fit_reasoning}</p>\n  <p><a href=\"${j.url}\">View posting</a></p>\n  <p>${button(link(j, \"applied\"), \"Applied\", \"#2f6fed\")}${button(link(j, \"not_interested\"), \"Not interested\", \"#8a8f98\")}</p>\n  <hr/>\n`;\n}).join(\"\");\n\nreturn [{ json: { emailBody: rows, count: items.length } }];"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2240,
+        2336,
         -208
       ],
       "id": "n-email-body",
@@ -270,7 +295,7 @@
       "type": "n8n-nodes-base.gmail",
       "typeVersion": 2.2,
       "position": [
-        2448,
+        2528,
         -208
       ],
       "id": "n-gmail",
@@ -306,6 +331,14 @@
             {
               "fieldId": "emailed",
               "fieldValue": "true"
+            },
+            {
+              "fieldId": "fit_score",
+              "fieldValue": "={{ $json.fit_score }}"
+            },
+            {
+              "fieldId": "fit_reasoning",
+              "fieldValue": "={{ $json.fit_reasoning }}"
             }
           ]
         }
@@ -398,6 +431,21 @@
       ],
       "id": "note-4",
       "name": "Sticky Note4"
+    },
+    {
+      "parameters": {
+        "content": "## 🔁 FEEDBACK BUTTONS\nEach posting gets Applied / Not interested buttons with a signed token.\nClicks go to the \"Job Sourcing - Feedback\" workflow: Applied adds the role\nto the Notion Job Pipeline (Stage: Applied).",
+        "width": 520,
+        "height": 176
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2144,
+        0
+      ],
+      "id": "note-5",
+      "name": "Sticky Note5"
     }
   ],
   "connections": {
@@ -527,7 +575,7 @@
       "main": [
         [
           {
-            "node": "Build Email Body",
+            "node": "Sign Feedback Links",
             "type": "main",
             "index": 0
           }
@@ -539,6 +587,17 @@
         [
           {
             "node": "Send Daily Digest Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sign Feedback Links": {
+      "main": [
+        [
+          {
+            "node": "Build Email Body",
             "type": "main",
             "index": 0
           }

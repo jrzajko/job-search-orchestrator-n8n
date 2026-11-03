@@ -1,0 +1,876 @@
+{
+  "name": "Job Sourcing - Feedback (Applied / Not interested)",
+  "nodes": [
+    {
+      "id": "8b8e24a0-df8d-490b-b261-0c732d199702",
+      "name": "Link Clicked (GET)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "job-feedback",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "4a63bf22-0265-4325-a26a-408ee144de78",
+      "name": "Normalise Link",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "l1",
+              "name": "source",
+              "value": "={{ $json.query?.source ?? \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "l2",
+              "name": "external_id",
+              "value": "={{ $json.query?.external_id ?? \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "l3",
+              "name": "action",
+              "value": "={{ $json.query?.action ?? \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "l4",
+              "name": "token",
+              "value": "={{ $json.query?.token ?? \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "l5",
+              "name": "expected_token",
+              "value": "={{ (\"YOUR_FEEDBACK_SECRET|\" + ($json.query?.source ?? \"\") + \"|\" + ($json.query?.external_id ?? \"\")).hash(\"sha256\") }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "36124da7-762a-4940-90f2-9cb0a1719e10",
+      "name": "Get Posting",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "job_postings",
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "source",
+              "condition": "eq",
+              "keyValue": "={{ $json.source }}"
+            },
+            {
+              "keyName": "external_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.external_id }}"
+            }
+          ]
+        }
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "655b393d-66b4-4a8b-82c3-7da52a7e8f79",
+      "name": "Valid Link?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Normalise Link\").item.json.token }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "={{ $(\"Normalise Link\").item.json.expected_token }}"
+            },
+            {
+              "leftValue": "={{ [\"applied\", \"not_interested\"].includes($(\"Normalise Link\").item.json.action) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ $json.external_id }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "3cccf1f2-1790-4693-bbaf-b4b502df1424",
+      "name": "Show Confirmation Page",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Job feedback</title><style>body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px;margin:48px auto;padding:0 16px;color:#222;line-height:1.5}button{font-size:16px;padding:10px 20px;border:0;border-radius:6px;background:#2f6fed;color:#fff;cursor:pointer}a{color:#2f6fed}</style></head><body><h2>{{ $(\"Normalise Link\").item.json.action === \"applied\" ? \"Mark as applied?\" : \"Mark as not interested?\" }}</h2><p><b>{{ ($json.title || \"\").replace(/</g, \"&lt;\") }}</b> at {{ ($json.company || \"\").replace(/</g, \"&lt;\") }}</p><p>{{ $(\"Normalise Link\").item.json.action === \"applied\" ? \"This also adds the role to your Notion Job Pipeline with Stage: Applied.\" : \"It will be recorded so it is not suggested again.\" }}</p><form method=\"POST\" action=\"job-feedback-confirm\"><input type=\"hidden\" name=\"source\" value=\"{{ $(\"Normalise Link\").item.json.source }}\"><input type=\"hidden\" name=\"external_id\" value=\"{{ $(\"Normalise Link\").item.json.external_id }}\"><input type=\"hidden\" name=\"action\" value=\"{{ $(\"Normalise Link\").item.json.action }}\"><input type=\"hidden\" name=\"token\" value=\"{{ $(\"Normalise Link\").item.json.token }}\"><button type=\"submit\">Confirm</button></form></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "060e7509-0346-4b84-8a5d-d0464e6ab37f",
+      "name": "Reject Invalid Link",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Job feedback</title><style>body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px;margin:48px auto;padding:0 16px;color:#222;line-height:1.5}button{font-size:16px;padding:10px 20px;border:0;border-radius:6px;background:#2f6fed;color:#fff;cursor:pointer}a{color:#2f6fed}</style></head><body><h2>This link is not valid</h2><p>The posting was not found or the link has been altered.</p></body></html>",
+        "options": {
+          "responseCode": 403,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "0a357982-a8dd-41f8-95bd-f7a4058a118b",
+      "name": "Confirm Submitted (POST)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        608
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "job-feedback-confirm",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "be034d3b-f742-443f-aafa-e097e1b03af8",
+      "name": "Normalise Confirm",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        608
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c1",
+              "name": "source",
+              "value": "={{ $json.body?.source ?? \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "c2",
+              "name": "external_id",
+              "value": "={{ $json.body?.external_id ?? \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "c3",
+              "name": "action",
+              "value": "={{ $json.body?.action ?? \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "c4",
+              "name": "token",
+              "value": "={{ $json.body?.token ?? \"\" }}",
+              "type": "string"
+            },
+            {
+              "id": "c5",
+              "name": "expected_token",
+              "value": "={{ (\"YOUR_FEEDBACK_SECRET|\" + ($json.body?.source ?? \"\") + \"|\" + ($json.body?.external_id ?? \"\")).hash(\"sha256\") }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "6b31e17a-1e0e-4f64-8e51-104bfea783d8",
+      "name": "Get Posting for Update",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        448,
+        608
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "job_postings",
+        "returnAll": false,
+        "limit": 1,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "source",
+              "condition": "eq",
+              "keyValue": "={{ $json.source }}"
+            },
+            {
+              "keyName": "external_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.external_id }}"
+            }
+          ]
+        }
+      },
+      "alwaysOutputData": true,
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "57edc366-d35d-4c2c-ac96-9ff1890cc7b6",
+      "name": "Valid Request?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        608
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Normalise Confirm\").item.json.token }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "={{ $(\"Normalise Confirm\").item.json.expected_token }}"
+            },
+            {
+              "leftValue": "={{ [\"applied\", \"not_interested\"].includes($(\"Normalise Confirm\").item.json.action) }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "leftValue": "={{ $json.external_id }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "e37f8e4d-eb23-4682-84f5-7d111130b221",
+      "name": "Already Marked?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        512
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.status }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "175529ee-d31a-4c04-b75d-1d4d8539e5c3",
+      "name": "Show Already Marked",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1120,
+        416
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Job feedback</title><style>body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px;margin:48px auto;padding:0 16px;color:#222;line-height:1.5}button{font-size:16px;padding:10px 20px;border:0;border-radius:6px;background:#2f6fed;color:#fff;cursor:pointer}a{color:#2f6fed}</style></head><body><h2>Already recorded</h2><p>This role is already marked as <b>{{ ($json.status || \"\").replace(\"_\", \" \") }}</b>. Nothing was changed.</p></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "b7b18ce9-59af-4ab5-a388-0dcbb1ab2d2b",
+      "name": "Applied?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        608
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $(\"Normalise Confirm\").item.json.action }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "applied"
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "5656d93c-dd2e-4c30-9d9f-2726aec2fc04",
+      "name": "Add to Notion Job Pipeline",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 3,
+      "position": [
+        1344,
+        512
+      ],
+      "parameters": {
+        "resource": "databasePage",
+        "operation": "create",
+        "dataSourceId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "YOUR_NOTION_DATA_SOURCE_ID"
+        },
+        "title": "={{ $json.company || \"Unknown company\" }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Role|rich_text",
+              "textContent": "={{ $json.title }}"
+            },
+            {
+              "key": "Application link|url",
+              "urlValue": "={{ $json.url }}",
+              "ignoreIfEmpty": true
+            },
+            {
+              "key": "Stage|select",
+              "selectValue": "Applied"
+            },
+            {
+              "key": "Decision|select",
+              "selectValue": "Pending"
+            },
+            {
+              "key": "Salary range|rich_text",
+              "textContent": "={{ $json.salary_max ? ($json.salary_min && $json.salary_min !== $json.salary_max ? \"£\" + Math.round($json.salary_min).toLocaleString(\"en-GB\") + \" – \" : \"\") + \"£\" + Math.round($json.salary_max).toLocaleString(\"en-GB\") : \"\" }}"
+            },
+            {
+              "key": "Fit rationale|rich_text",
+              "textContent": "={{ $json.fit_score ? \"Auto-score \" + $json.fit_score + \"/5: \" : \"\" }}{{ $json.fit_reasoning || \"\" }}"
+            },
+            {
+              "key": "Last contact date|date",
+              "date": "={{ $now.toISODate() }}",
+              "includeTime": false
+            }
+          ]
+        },
+        "contentType": "markdown",
+        "markdown": "=## Overview\n\n{{ $json.title }} at {{ $json.company }} ({{ $json.location }}). Added from the daily job digest on {{ $now.toFormat(\"d MMMM yyyy\") }}.\n\n## Job Description\n\n{{ ($json.description || \"\").slice(0, 1800) }}\n\n[View posting]({{ $json.url }})\n\n## Notes / Red Flags\n\n",
+        "options": {}
+      }
+    },
+    {
+      "id": "72f1a1b8-e08f-4859-9bcf-be55f69d512c",
+      "name": "Mark as Applied",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        512
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "tableId": "job_postings",
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "source",
+              "condition": "eq",
+              "keyValue": "={{ $(\"Normalise Confirm\").item.json.source }}"
+            },
+            {
+              "keyName": "external_id",
+              "condition": "eq",
+              "keyValue": "={{ $(\"Normalise Confirm\").item.json.external_id }}"
+            }
+          ]
+        },
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "applied"
+            },
+            {
+              "fieldId": "status_at",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "4ebe2892-6216-479c-8dd0-7a0db3077e01",
+      "name": "Show Added to Notion",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1792,
+        512
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "=<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Job feedback</title><style>body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px;margin:48px auto;padding:0 16px;color:#222;line-height:1.5}button{font-size:16px;padding:10px 20px;border:0;border-radius:6px;background:#2f6fed;color:#fff;cursor:pointer}a{color:#2f6fed}</style></head><body><h2>Marked as applied ✓</h2><p>Added to your Notion Job Pipeline with Stage: Applied.</p><p><a href=\"{{ $(\"Add to Notion Job Pipeline\").item.json.url }}\">Open it in Notion</a></p></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "238d70e6-ee66-4446-887c-68f51e49bb7d",
+      "name": "Mark as Not Interested",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1344,
+        704
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "tableId": "job_postings",
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "source",
+              "condition": "eq",
+              "keyValue": "={{ $(\"Normalise Confirm\").item.json.source }}"
+            },
+            {
+              "keyName": "external_id",
+              "condition": "eq",
+              "keyValue": "={{ $(\"Normalise Confirm\").item.json.external_id }}"
+            }
+          ]
+        },
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "not_interested"
+            },
+            {
+              "fieldId": "status_at",
+              "fieldValue": "={{ $now.toISO() }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "REPLACE_ME",
+          "name": "Supabase account"
+        }
+      }
+    },
+    {
+      "id": "01106258-3bbf-49bc-8c0e-244dc263e3d3",
+      "name": "Show Not Interested",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        1568,
+        704
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Job feedback</title><style>body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px;margin:48px auto;padding:0 16px;color:#222;line-height:1.5}button{font-size:16px;padding:10px 20px;border:0;border-radius:6px;background:#2f6fed;color:#fff;cursor:pointer}a{color:#2f6fed}</style></head><body><h2>Marked as not interested</h2><p>Got it. This role is recorded and will not be suggested again.</p></body></html>",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "5085f005-e183-459c-a9ef-19fe0c32a4f1",
+      "name": "Reject Invalid Request",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        896,
+        704
+      ],
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "<!doctype html><html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Job feedback</title><style>body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:520px;margin:48px auto;padding:0 16px;color:#222;line-height:1.5}button{font-size:16px;padding:10px 20px;border:0;border-radius:6px;background:#2f6fed;color:#fff;cursor:pointer}a{color:#2f6fed}</style></head><body><h2>This request is not valid</h2><p>The posting was not found or the link has been altered.</p></body></html>",
+        "options": {
+          "responseCode": 403,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html; charset=utf-8"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "785beb6f-cdff-419c-b515-cf38d88ec7b1",
+      "name": "Sticky Note 268a891c",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -96
+      ],
+      "parameters": {
+        "content": "## 1. LINK CLICKED\nThe digest email links here. Checks the signed token, looks up the posting and shows a Confirm button. Nothing is changed yet: email scanners that open links on their own cannot mark anything.",
+        "color": 5,
+        "width": 1056,
+        "height": 416
+      }
+    },
+    {
+      "id": "b8dc1b84-4a05-4394-b0b6-9051c66aa69a",
+      "name": "Sticky Note 68179f0a",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        320
+      ],
+      "parameters": {
+        "content": "## 2. CONFIRMED\nThe Confirm button posts here. Re-checks the token, skips roles already marked (so a double click cannot create two Notion pages), then: Applied → Notion Job Pipeline (Stage: Applied) → Supabase. Not interested → Supabase only.",
+        "color": 4,
+        "width": 1952,
+        "height": 512
+      }
+    }
+  ],
+  "connections": {
+    "Link Clicked (GET)": {
+      "main": [
+        [
+          {
+            "node": "Normalise Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise Link": {
+      "main": [
+        [
+          {
+            "node": "Get Posting",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Posting": {
+      "main": [
+        [
+          {
+            "node": "Valid Link?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Link?": {
+      "main": [
+        [
+          {
+            "node": "Show Confirmation Page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Invalid Link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Confirm Submitted (POST)": {
+      "main": [
+        [
+          {
+            "node": "Normalise Confirm",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalise Confirm": {
+      "main": [
+        [
+          {
+            "node": "Get Posting for Update",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Posting for Update": {
+      "main": [
+        [
+          {
+            "node": "Valid Request?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Request?": {
+      "main": [
+        [
+          {
+            "node": "Already Marked?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Invalid Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Already Marked?": {
+      "main": [
+        [
+          {
+            "node": "Show Already Marked",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Applied?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Applied?": {
+      "main": [
+        [
+          {
+            "node": "Add to Notion Job Pipeline",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark as Not Interested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add to Notion Job Pipeline": {
+      "main": [
+        [
+          {
+            "node": "Mark as Applied",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Applied": {
+      "main": [
+        [
+          {
+            "node": "Show Added to Notion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark as Not Interested": {
+      "main": [
+        [
+          {
+            "node": "Show Not Interested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

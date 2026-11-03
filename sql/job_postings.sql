@@ -1,5 +1,5 @@
 -- Job postings store for the n8n job-search orchestrator.
--- Run once in the Supabase SQL editor.
+-- Run once in the Supabase SQL editor. (Upgrading from v1? Run 002_feedback_columns.sql instead.)
 
 create table if not exists job_postings (
   id            uuid primary key default gen_random_uuid(),
@@ -15,6 +15,10 @@ create table if not exists job_postings (
   description   text,
   first_seen_at timestamptz default now(),
   emailed       boolean default false,    -- set true once a posting has been scored
+  fit_score     int,                      -- Claude's 1-5 score, stored when scored
+  fit_reasoning text,
+  status        text check (status in ('applied', 'not_interested')),  -- set from the digest buttons
+  status_at     timestamptz,
   unique (source, external_id)            -- dedupe lives in the database, not in n8n
 );
 
