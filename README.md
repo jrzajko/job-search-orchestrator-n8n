@@ -23,9 +23,21 @@ The answer here is to give each tool the step it does best:
 
 ## What it produces
 
-The daily digest from a real run, with one block per posting scored 4 or 5:
+The daily digest from a real run (4 Nov 2026), with one block per posting scored 4 or 5 and the two feedback buttons:
 
-![Daily digest email](docs/digest-email.png)
+![Daily digest email with Applied / Not interested buttons](docs/digest-email.png)
+
+Clicking **Applied** opens a confirmation page. Confirming creates a page in my Notion job pipeline, filled in like this (company and role changed here):
+
+| Notion property | Value |
+|---|---|
+| Company | Example Analytics |
+| Role | Solutions Consultant, Europe |
+| Stage | Applied |
+| Decision | Pending |
+| Salary range | £115,000 – £145,000 |
+| Last contact date | the day of the click |
+| Page body | Overview, job description, link to the posting |
 
 The n8n canvas, with sticky notes marking each stage:
 
@@ -139,7 +151,17 @@ From the first full run:
 | Model | Claude Haiku 4.5 ($1 / $5 per million input / output tokens) |
 | Scoring cost per run | a few pence at most |
 
-On later days the dedupe and the `emailed` flag mean only new postings are scored, so the LLM workload shrinks to that day's genuinely new survivors.
+On later days the dedupe and the `emailed` flag mean only new postings are scored, so the LLM workload shrinks to that day's genuinely new survivors. The first scheduled run of v2 (4 Nov 2026) shows the steady state:
+
+| Stage | Postings |
+|---|---|
+| Fetched from Adzuna (all 8 searches succeeded) | 350 |
+| Not yet processed in Supabase, re-checked by the free filter | 717 |
+| Passed the free filter (new since the last run) | 1 |
+| Scored by Claude | 1 |
+| Scored 4 or 5 and emailed, with buttons | 1 |
+
+One Claude call that morning: the daily cost is now close to zero, because almost everything is either a duplicate or rejected for free.
 
 ---
 
@@ -193,6 +215,17 @@ One design problem was caught before it shipped:
 - **Location matching is a substring check.** "uk" is loose, and the keyword list is hand-maintained.
 - **Scores vary slightly between runs**, and the ≥ 4 cut-off is a judgement call, not tuned.
 - **One source so far.** Next: add Reed or a similar aggregator as a second sub-workflow.
+- **The unprocessed backlog grows.** Only postings that pass the filter get `emailed = true`, so the rejects (717 on 4 Nov) are re-filtered every morning. It costs nothing because the filter is plain code, but it will slow the run down over time. Next: mark filter rejects as processed too, or only read rows first seen in the last few days.
+
+---
+
+## Versions
+
+| Version | What changed |
+|---|---|
+| v1 | Adzuna → Supabase dedupe → free filter → Claude scoring → daily email digest |
+| v2 | Applied / Not interested buttons with signed links and a confirmation page. Applied creates a Notion job pipeline page with Stage: Applied. Scores and reasons are stored in Supabase |
+| v2.1 | An Adzuna outage skips one search instead of failing the run. Failed runs send an alert email |
 
 ---
 
