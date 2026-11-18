@@ -1,0 +1,270 @@
+{
+  "name": "Companies - Check Job Boards",
+  "nodes": [
+    {
+      "id": "622c9288-02fa-4efd-b2de-bff50eba2c62",
+      "name": "Sticky Note 622c9288",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        100,
+        640
+      ],
+      "parameters": {
+        "content": "## Check company job boards\nTakes up to 400 unchecked rows from board_candidates (slugs found in Common Crawl), calls each board's public feed once, and saves open jobs, UK jobs and status (uk, no_uk, no_jobs, not_found, error). Runs every 10 minutes; switch the schedule off when nothing is left unchecked.",
+        "color": 5,
+        "width": 520,
+        "height": 160
+      }
+    },
+    {
+      "id": "d9033970-1b04-443b-9de6-3af9592239d9",
+      "name": "Run Check",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        450
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "086123d8-0faa-4e51-a9d7-9510bb2bd229",
+      "name": "Get Unchecked Boards",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        300,
+        450
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "board_candidates",
+        "returnAll": false,
+        "limit": 400,
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "unchecked"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "36b0d61f-8b0f-407a-b14f-cad2277180a0",
+      "name": "Run Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        450
+      ],
+      "parameters": {
+        "jsCode": "// Counts this run's results by status.\n// The loop's done output holds every row saved by 'Save Result' across all batches.\nconst rows = $input.all().map(i => i.json);\nconst counts = {};\nfor (const r of rows) counts[r.status] = (counts[r.status] || 0) + 1;\nreturn [{ json: { checked: rows.length, ...counts,\n  uk_boards: rows.filter(r => r.status === 'uk').map(r => r.source + ':' + r.slug + ' (' + r.uk_jobs + ')').slice(0, 50) } }];"
+      }
+    },
+    {
+      "id": "be94ea73-516e-48f6-ab3e-ebd07bf44182",
+      "name": "Check Boards",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// Calls each company's public job board feed and counts open jobs and UK jobs.\n// Runs inside the Code node so only the summary is kept, not every job description.\nconst sleep = ms => new Promise(r => setTimeout(r, ms));\n\nconst UK_WORDS = /\\b(united kingdom|uk|u\\.k\\.|england|scotland|wales|northern ireland|great britain|britain)\\b/i;\nconst UK_CITIES = /\\b(london|manchester|edinburgh|glasgow|leeds|sheffield|liverpool|newcastle upon tyne|nottingham|brighton|bristol|cardiff|belfast|aberdeen|milton keynes|southampton|leicester|coventry|bath|exeter|oxford|cambridge|birmingham|reading)\\b/i;\nconst NOT_UK = /\\b(usa|united states|canada|australia|ontario|massachusetts|alabama|new hampshire)\\b|,\\s*(?!UK\\b|GB\\b)[A-Z]{2}\\b/;\n\nconst isUkText = s => {\n  if (!s) return false;\n  if (UK_WORDS.test(s)) return true;\n  return UK_CITIES.test(s) && !NOT_UK.test(s);\n};\n\nconst this_helpers = this.helpers;\nasync function get(url) {\n  const res = await this_helpers.httpRequest({\n    method: 'GET', url, json: true, returnFullResponse: true,\n    ignoreHttpStatusErrors: true, timeout: 20000\n  });\n  return res;\n}\n\nconst out = [];\nfor (const item of $input.all()) {\n  const { source, slug } = item.json;\n  const row = { source, slug, status: 'error', open_jobs: null, uk_jobs: null, company_name: null,\n                last_checked_at: new Date().toISOString() };\n  try {\n    let url;\n    if (source === 'greenhouse') url = 'https://boards-api.greenhouse.io/v1/boards/' + encodeURIComponent(slug) + '/jobs';\n    else if (source === 'ashby') url = 'https://api.ashbyhq.com/posting-api/job-board/' + encodeURIComponent(slug);\n    else if (source === 'workable') url = 'https://apply.workable.com/api/v1/widget/accounts/' + encodeURIComponent(slug);\n    else throw new Error('unknown source ' + source);\n\n    const res = await get(url);\n    if (res.statusCode === 404) { row.status = 'not_found'; }\n    else if (res.statusCode !== 200) { row.status = 'error'; row.company_name = 'HTTP ' + res.statusCode; }\n    else {\n      const body = res.body || {};\n      const jobs = Array.isArray(body.jobs) ? body.jobs : [];\n      let uk = 0;\n      for (const j of jobs) {\n        let hit = false;\n        if (source === 'greenhouse') {\n          hit = isUkText(j.location && j.location.name);\n        } else if (source === 'ashby') {\n          if (j.isListed === false) continue;\n          const country = j.address && j.address.postalAddress && j.address.postalAddress.addressCountry;\n          hit = isUkText(country) || isUkText(j.location) ||\n                (j.secondaryLocations || []).some(s => isUkText(s.location) ||\n                  isUkText(s.address && s.address.addressCountry));\n        } else if (source === 'workable') {\n          const locs = (j.locations || []).concat([{ country: j.country, countryCode: j.countryCode, city: j.city }]);\n          hit = locs.some(l => l && (l.countryCode === 'GB' || isUkText(l.country)));\n        }\n        if (hit) uk++;\n      }\n      row.open_jobs = source === 'ashby' ? jobs.filter(j => j.isListed !== false).length : jobs.length;\n      row.uk_jobs = uk;\n      row.status = row.open_jobs === 0 ? 'no_jobs' : (uk > 0 ? 'uk' : 'no_uk');\n\n      if (source === 'workable') row.company_name = body.name || null;\n      if (source === 'greenhouse' && uk > 0) {\n        await sleep(300);\n        const b = await get('https://boards-api.greenhouse.io/v1/boards/' + encodeURIComponent(slug));\n        if (b.statusCode === 200 && b.body) row.company_name = b.body.name || null;\n      }\n    }\n  } catch (e) {\n    row.status = 'error';\n    row.company_name = String(e.message || e).slice(0, 200);\n  }\n  out.push({ json: row });\n  await sleep(400); // polite pace: about 1-2 requests a second\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "2b0c5450-c3e4-43a3-9551-c20ddf3a0f33",
+      "name": "Save Result",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        900,
+        600
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "tableId": "board_candidates",
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "source",
+              "condition": "eq",
+              "keyValue": "={{ $json.source }}"
+            },
+            {
+              "keyName": "slug",
+              "condition": "eq",
+              "keyValue": "={{ $json.slug }}"
+            }
+          ]
+        },
+        "dataToSend": "defineBelow",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "status",
+              "fieldValue": "={{ $json.status }}"
+            },
+            {
+              "fieldId": "open_jobs",
+              "fieldValue": "={{ $json.open_jobs }}"
+            },
+            {
+              "fieldId": "uk_jobs",
+              "fieldValue": "={{ $json.uk_jobs }}"
+            },
+            {
+              "fieldId": "company_name",
+              "fieldValue": "={{ $json.company_name }}"
+            },
+            {
+              "fieldId": "last_checked_at",
+              "fieldValue": "={{ $json.last_checked_at }}"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "bda1c71d-d115-412c-9f36-ffbf04134fbf",
+      "name": "Batches of 25",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        450
+      ],
+      "parameters": {
+        "batchSize": 25,
+        "options": {}
+      }
+    },
+    {
+      "id": "7a467870-baf0-49a8-b5e3-5d34d2d2c9d2",
+      "name": "Every 10 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        400
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Run Check": {
+      "main": [
+        [
+          {
+            "node": "Get Unchecked Boards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Unchecked Boards": {
+      "main": [
+        [
+          {
+            "node": "Batches of 25",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Boards": {
+      "main": [
+        [
+          {
+            "node": "Save Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Result": {
+      "main": [
+        [
+          {
+            "node": "Batches of 25",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batches of 25": {
+      "main": [
+        [
+          {
+            "node": "Run Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Boards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 10 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Get Unchecked Boards",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}

@@ -4,6 +4,13 @@ A daily n8n pipeline that pulls job postings from an aggregator API, dedupes the
 
 Built in one working session in n8n Cloud as a tool for my own job search, then run on a schedule. v2 added the feedback buttons and the Notion hand-off.
 
+> **Where this went next (November 2026).** This started as a tool for my own job search. From 13 November it became the starting point for a done-for-you job search service for other people: an intake form, a CV and LinkedIn guide, and this daily digest, tested with two users. Two things changed the design:
+>
+> - **Data.** Aggregator APIs need a paid licence for commercial use, and return only a snippet of each ad. So the service now builds its own database of UK-hiring companies from free public job board feeds, which include full descriptions: [`company-database/`](company-database/). Companies are found through Common Crawl (7,792 boards from one crawl), checked for UK roles, and tagged by Claude from a fixed list of sectors, company types and sizes.
+> - **Matching.** Users answer the same lists on the intake form ([`intake/`](intake/)), so each person is matched to companies, and the daily pipeline pulls roles from those companies.
+>
+> The workflows in `workflows/` below are the original personal pipeline (v1–v2.1). Dated progress is in [`CHANGELOG.md`](CHANGELOG.md). A notebook from an agentic-AI course exercise, built on the same use case, is in [`notebooks/`](notebooks/).
+
 ---
 
 ## The problem
@@ -226,6 +233,8 @@ One design problem was caught before it shipped:
 | v1 | Adzuna → Supabase dedupe → free filter → Claude scoring → daily email digest |
 | v2 | Applied / Not interested buttons with signed links and a confirmation page. Applied creates a Notion job pipeline page with Stage: Applied. Scores and reasons are stored in Supabase |
 | v2.1 | An Adzuna outage skips one search instead of failing the run. Failed runs send an alert email |
+| v3 (13–16 Nov) | Pipeline copied for a second user: newest-first title searches, senior/IT titles dropped before scoring, 60-posting scoring cap, alert naming skipped searches, 3-day backlog window, Claude Haiku 5.5 (live workflows; not exported here) |
+| v4 (18 Nov) | Company database: Common Crawl discovery, board check and Claude tagging workflows, shared lists, intake form v2. See [`company-database/`](company-database/) |
 
 ---
 
