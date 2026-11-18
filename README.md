@@ -1,12 +1,79 @@
 # job-search-orchestrator-n8n
 
+**A job search pipeline that started as a tool for my own job hunt and is turning into a done-for-you service for other people:** an intake form, a CV and LinkedIn guide, and a daily email of jobs matched and scored for each person.
+
+It's built with n8n, Supabase and Claude. The design principle throughout: **use free, deterministic steps for everything they can do, and pay an LLM only for judgement.**
+
+---
+
+## The story so far
+
+| When | Chapter | What happened |
+|---|---|---|
+| Oct – early Nov 2026 | **1. My own pipeline** | A daily n8n workflow pulls jobs from an aggregator API, removes duplicates in Supabase, filters with plain code and has Claude score only what's left. Strong matches arrive by email with Applied / Not interested buttons that update my Notion tracker. Only ~7% of postings ever reach the LLM. [Details below](#part-1-where-it-started-my-own-job-pipeline) |
+| 13–16 Nov | **2. A second user** | I set the pipeline up for someone changing career, which showed what a service needs: ask direction questions *before* building, search newest-first, cap scoring costs per person, alert on silent failures. Scoring moved to Claude Haiku 5.5 (about 10× cheaper). |
+| 13–17 Nov | **3. The data wall** | Turning this into a paid service hit two limits of aggregator APIs: commercial use needs a paid licence before the first customer, and they only return a snippet of each ad, so scoring and CV tailoring work blind. |
+| 18 Nov | **4. A company database** | Companies publish every open role, with the full description, on free public job board feeds (Greenhouse, Ashby, Workable). The catch is that you need each company's name first. So I found them in Common Crawl's web archive (7,792 company boards from one crawl), checked which hire in the UK, and had Claude tag each one by sector, type and size from a fixed list. People answer the same list on the intake form, so each person can be matched to companies. [Details](company-database/) |
+| Next | **5. Matching** | Match each person to their companies, pull new roles from those boards daily, score with the full description, and send one digest. |
+
+---
+
+## How it works now
+
+```mermaid
+flowchart LR
+    subgraph Find["Find companies (monthly)"]
+        CC[Common Crawl URL index] --> DB[DuckDB: company slugs]
+    end
+    subgraph Build["Build the database (n8n + Supabase)"]
+        DB --> CHK[Check each job board:<br/>open jobs, UK jobs]
+        CHK --> CO[(companies)]
+        CO --> TAG[Claude tags sector,<br/>type, size]
+    end
+    subgraph Person["Each person"]
+        FORM[Intake form:<br/>same lists] --> MATCH[Match to companies]
+    end
+    TAG --> MATCH
+    MATCH --> PULL[Daily pull of new roles<br/>from matched boards]
+    AGG[Aggregator API] --> FILTER
+    PULL --> FILTER[Free filter in code]
+    FILTER --> SCORE[Claude scores 1-5]
+    SCORE --> MAIL[Daily digest email]
+```
+
+The aggregator stays for sectors where employers don't use public job boards (construction, housing, much of the public sector).
+
+| Number | Value |
+|---|---|
+| Share of postings that reach the LLM (personal pipeline) | ~7% |
+| Company boards found in one Common Crawl snapshot | 7,792 (Workable 3,666, Greenhouse 3,022, Ashby 1,106) |
+| First board check | 11 of 20 boards had UK roles |
+| Cost to tag a company with Claude Haiku 5.5 | about $0.0002 |
+| Cost to build the company database | under £2 |
+
+---
+
+## What's in this repo
+
+| Folder | What it is |
+|---|---|
+| [`workflows/`](workflows/), [`sql/`](sql/), [`sample-data/`](sample-data/) | Part 1: the personal pipeline (v1–v2.1), importable into n8n |
+| [`company-database/`](company-database/) | Part 2: Common Crawl discovery (DuckDB), Supabase schema and shared lists, board check and tagging workflows |
+| [`intake/`](intake/) | Google Form scripts for the intake questions (v1, and the v2 update with the shared lists) |
+| [`notebooks/`](notebooks/) | A LangChain agent notebook from an agentic-AI course, built on the same use case (fictional candidate) |
+| [`CHANGELOG.md`](CHANGELOG.md) | Dated progress |
+
+Keys, credential IDs and personal details are replaced with placeholders throughout. The people who tested the service aren't named.
+
+---
+
+## Part 1: where it started, my own job pipeline
+
 A daily n8n pipeline that pulls job postings from an aggregator API, dedupes them in Supabase, filters out obvious mismatches with plain code, and pays Claude to score only what is left. The strong matches arrive as an email at 08:00, each with **Applied** and **Not interested** buttons. Clicking Applied adds the role to my Notion job pipeline with Stage: Applied, so tracking starts the moment I apply.
 
 Built in one working session in n8n Cloud as a tool for my own job search, then run on a schedule. v2 added the feedback buttons and the Notion hand-off.
 
----
-
-## The problem
+### The problem
 
 Finding roles at scale is mostly reading postings that were never a fit. The obvious automation, an LLM crawling job sites, is expensive: every page costs tokens, most of them spent on postings a simple keyword check would have rejected. LinkedIn and most job boards also don't offer an open API for pulling postings.
 
@@ -21,7 +88,7 @@ The answer here is to give each tool the step it does best:
 
 ---
 
-## What it produces
+### What it produces
 
 The daily digest from a real run (4 Nov 2026), with one block per posting scored 4 or 5 and the two feedback buttons:
 
@@ -45,7 +112,7 @@ The n8n canvas, with sticky notes marking each stage:
 
 ---
 
-## How it works
+### How it works
 
 ```
 Schedule 08:00
@@ -133,7 +200,7 @@ The page body gets an Overview, the job description and a link to the posting.
 
 ---
 
-## Results
+### Results (personal pipeline)
 
 From the first full run:
 
@@ -165,7 +232,7 @@ One Claude call that morning: the daily cost is now close to zero, because almos
 
 ---
 
-## Where it went wrong
+### Where it went wrong
 
 Two mistakes were caught by checking real row counts, not by n8n reporting an error:
 
@@ -180,7 +247,7 @@ One design problem was caught before it shipped:
 
 ---
 
-## Design decisions and trade-offs
+### Design decisions and trade-offs
 
 - **Free filters before the LLM.** They cut the scoring workload about 15×. The cost is that a good role with an unusual title never gets scored.
 - **Dedupe in the database, not in n8n.** A `unique (source, external_id)` constraint holds across runs and sources without any state in the workflow.
@@ -192,7 +259,7 @@ One design problem was caught before it shipped:
 
 ---
 
-## Error handling
+### Error handling
 
 - **Adzuna and Supabase reads** retry 5 times, 5 seconds apart.
 - **An Adzuna outage skips one search, not the run.** If a search still fails after 5 retries (Adzuna returns intermittent 503s), its error branch returns no postings and the other searches carry on. Before this, a single 503 stopped the whole 08:00 run, which happened on several mornings in late Oct and early Nov 2026.
@@ -205,7 +272,9 @@ One design problem was caught before it shipped:
 
 ---
 
-## Limitations and next steps
+### Limitations and next steps (as of v2.1)
+
+Several of these were fixed in v3 (newest-first searches, an alert naming skipped searches, a 3-day backlog window); see [Versions](#versions).
 
 - **A skipped search is silent.** When Adzuna is down for one search, the digest is just shorter; nothing says a search was skipped. Next: list skipped searches at the bottom of the digest. If Adzuna is down for every search, no new postings arrive that day.
 - **Salaries are often Adzuna's estimate**, not the employer's, so the salary floor can wrongly include or exclude roles.
@@ -217,19 +286,7 @@ One design problem was caught before it shipped:
 - **One source so far.** Next: add Reed or a similar aggregator as a second sub-workflow.
 - **The unprocessed backlog grows.** Only postings that pass the filter get `emailed = true`, so the rejects (717 on 4 Nov) are re-filtered every morning. It costs nothing because the filter is plain code, but it will slow the run down over time. Next: mark filter rejects as processed too, or only read rows first seen in the last few days.
 
----
-
-## Versions
-
-| Version | What changed |
-|---|---|
-| v1 | Adzuna → Supabase dedupe → free filter → Claude scoring → daily email digest |
-| v2 | Applied / Not interested buttons with signed links and a confirmation page. Applied creates a Notion job pipeline page with Stage: Applied. Scores and reasons are stored in Supabase |
-| v2.1 | An Adzuna outage skips one search instead of failing the run. Failed runs send an alert email |
-
----
-
-## Setup
+### Setup (personal pipeline)
 
 1. Create a Supabase project and run `sql/job_postings.sql` in the SQL editor. If you already run v1, run `sql/002_feedback_columns.sql` instead.
 2. Get an Adzuna app id and key from developer.adzuna.com.
@@ -249,6 +306,26 @@ One design problem was caught before it shipped:
 
 ---
 
-## How it was built
+### How it was built
 
 Built step by step in n8n Cloud: one aggregator working end to end first, then the Supabase store and dedupe, then the free filter, then Claude scoring, then the digest, and then the `emailed` flag so each posting is only scored once. v2 added the feedback workflow, built on top without changing the sourcing or scoring stages. Each stage was checked against real row counts in Supabase before moving on, which is how both mistakes above were found.
+
+---
+
+## Part 2: the company database
+
+See [`company-database/README.md`](company-database/README.md) for the full write-up: why it exists, how each step works, results, what went wrong, design decisions and setup.
+
+---
+
+## Versions
+
+| Version | What changed |
+|---|---|
+| v1 | Adzuna → Supabase dedupe → free filter → Claude scoring → daily email digest |
+| v2 | Applied / Not interested buttons with signed links and a confirmation page. Applied creates a Notion job pipeline page with Stage: Applied. Scores and reasons are stored in Supabase |
+| v2.1 | An Adzuna outage skips one search instead of failing the run. Failed runs send an alert email |
+| v3 (13–16 Nov) | Pipeline set up for a second user: newest-first title searches, senior/IT titles dropped before scoring, 60-posting scoring cap, alert naming skipped searches, 3-day backlog window, Claude Haiku 5.5 (live workflows; not exported here) |
+| v4 (18 Nov) | Company database: Common Crawl discovery, board check and Claude tagging workflows, shared lists, intake form v2. See [`company-database/`](company-database/) |
+
+Dated detail is in [`CHANGELOG.md`](CHANGELOG.md).

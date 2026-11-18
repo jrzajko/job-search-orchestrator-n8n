@@ -1,0 +1,316 @@
+{
+  "name": "Companies - Tag with Claude",
+  "nodes": [
+    {
+      "id": "3de98830-f932-4afc-ba28-28f870fd4b13",
+      "name": "Sticky Note 3de98830",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        100,
+        640
+      ],
+      "parameters": {
+        "content": "## Tag companies (Haiku 5.5)\nTakes up to 100 untagged companies (view companies_to_tag), reads each one's job board, and asks Claude for name, description, sector, type, size and UK locations, using only the options in taxonomy_options. Anything off-list or low-confidence is flagged needs_review.",
+        "color": 4,
+        "width": 560,
+        "height": 170
+      }
+    },
+    {
+      "id": "158a3862-308d-4f26-9325-adee3afb9abb",
+      "name": "Run Tagging",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        450
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "2b7c0eb6-85ec-40cb-bee7-fb4004ee9260",
+      "name": "Get Lists",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        300,
+        450
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "taxonomy_options",
+        "returnAll": true,
+        "filterType": "none"
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "e200dae3-1828-4c3c-8ecb-8b3becbe6625",
+      "name": "Get Companies to Tag",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        500,
+        450
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "getAll",
+        "tableId": "companies_to_tag",
+        "returnAll": false,
+        "limit": 100,
+        "filterType": "none"
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      },
+      "executeOnce": true,
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000
+    },
+    {
+      "id": "52f582a4-acba-4eb5-b925-5b5289c26a7c",
+      "name": "Run Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        450
+      ],
+      "parameters": {
+        "jsCode": "// What this run tagged.\nconst rows = $input.all().map(i => i.json);\nconst by = (k) => rows.reduce((a, r) => { const v = r[k] || 'none'; a[v] = (a[v] || 0) + 1; return a; }, {});\nreturn [{ json: { tagged: rows.length, needs_review: rows.filter(r => r.needs_review).length,\n  confidence: by('tag_confidence'), main_sector: by('main_sector'),\n  examples: rows.slice(0, 15).map(r => r.name + ': ' + (r.main_sector || '?') + ' / ' + (r.company_type || '?') + ' / ' + (r.size_band || '?')) } }];"
+      }
+    },
+    {
+      "id": "9841b722-8906-4d3f-970e-e02192a6447d",
+      "name": "Gather Company Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        600
+      ],
+      "parameters": {
+        "jsCode": "// For each company: read its job board, keep the UK jobs, and build the tagging prompt.\nconst sleep = ms => new Promise(r => setTimeout(r, ms));\nconst helpers = this.helpers;\nconst get = url => helpers.httpRequest({ method: 'GET', url, json: true, returnFullResponse: true, ignoreHttpStatusErrors: true, timeout: 25000 });\n\nconst UK_WORDS = /\\b(united kingdom|uk|u\\.k\\.|england|scotland|wales|northern ireland|great britain|britain)\\b/i;\nconst UK_CITIES = /\\b(london|manchester|edinburgh|glasgow|leeds|sheffield|liverpool|newcastle upon tyne|nottingham|brighton|bristol|cardiff|belfast|aberdeen|milton keynes|southampton|leicester|coventry|bath|exeter|oxford|cambridge|birmingham|reading)\\b/i;\nconst NOT_UK = /\\b(usa|united states|canada|australia|ontario|massachusetts|alabama|new hampshire)\\b|,\\s*(?!UK\\b|GB\\b)[A-Z]{2}\\b/;\nconst isUk = s => !!s && (UK_WORDS.test(s) || (UK_CITIES.test(s) && !NOT_UK.test(s)));\n\nconst decode = s => String(s || '')\n  .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '\"').replace(/&#39;/g, \"'\").replace(/&amp;/g, '&');\nconst plain = s => decode(s).replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\\s+/g, ' ').trim();\n\n// The shared lists, from taxonomy_options\nconst lists = {};\nfor (const i of $('Get Lists').all()) {\n  const { list_name, value, sort_order } = i.json;\n  (lists[list_name] = lists[list_name] || []).push({ value, sort_order });\n}\nconst opts = name => (lists[name] || []).sort((a, b) => a.sort_order - b.sort_order).map(o => o.value);\n\nconst out = [];\nfor (const [idx, item] of $input.all().entries()) {\n  const c = item.json;\n  let boardName = null, boardAbout = '', total = 0;\n  const ukJobs = [];\n  let fetchNote = '';\n  try {\n    if (c.source === 'greenhouse') {\n      const meta = await get('https://boards-api.greenhouse.io/v1/boards/' + encodeURIComponent(c.slug));\n      if (meta.statusCode === 200) { boardName = meta.body.name; boardAbout = plain(meta.body.content); }\n      const r = await get('https://boards-api.greenhouse.io/v1/boards/' + encodeURIComponent(c.slug) + '/jobs?content=true');\n      const jobs = (r.statusCode === 200 && r.body.jobs) || [];\n      total = jobs.length;\n      for (const j of jobs) { const loc = j.location && j.location.name; if (isUk(loc)) ukJobs.push({ title: j.title, loc, text: plain(j.content) }); }\n    } else if (c.source === 'ashby') {\n      const r = await get('https://api.ashbyhq.com/posting-api/job-board/' + encodeURIComponent(c.slug));\n      const jobs = ((r.statusCode === 200 && r.body.jobs) || []).filter(j => j.isListed !== false);\n      total = jobs.length;\n      for (const j of jobs) {\n        const country = j.address && j.address.postalAddress && j.address.postalAddress.addressCountry;\n        const locs = [j.location, country].concat((j.secondaryLocations || []).map(s => s.location));\n        const hit = locs.find(isUk);\n        if (hit) ukJobs.push({ title: j.title, loc: j.location, text: j.descriptionPlain || plain(j.descriptionHtml), mode: j.workplaceType });\n      }\n    } else if (c.source === 'workable') {\n      const r = await get('https://apply.workable.com/api/v1/widget/accounts/' + encodeURIComponent(c.slug) + '?details=true');\n      if (r.statusCode === 200) {\n        boardName = r.body.name; boardAbout = plain(r.body.description);\n        const jobs = r.body.jobs || [];\n        total = jobs.length;\n        for (const j of jobs) {\n          const locs = (j.locations || []).concat([{ country: j.country, countryCode: j.countryCode, city: j.city }]);\n          const hit = locs.find(l => l && (l.countryCode === 'GB' || isUk(l.country)));\n          if (hit) ukJobs.push({ title: j.title, loc: [hit.city, hit.country].filter(Boolean).join(', '), text: plain(j.description), mode: j.telecommuting ? 'Remote' : '' });\n        }\n      }\n    }\n  } catch (e) { fetchNote = 'Board could not be read: ' + String(e.message || e).slice(0, 150); }\n\n  const ukLocs = [...new Set(ukJobs.map(j => j.loc).filter(Boolean))].slice(0, 15);\n  const titles = [...new Set(ukJobs.map(j => j.title))].slice(0, 12);\n  const sample = (ukJobs[0] && ukJobs[0].text || '').slice(0, 3000);\n\n  const prompt = [\n    'You are tagging an employer for a UK job search service. Use ONLY the options listed. Answer with JSON only.',\n    '',\n    'EMPLOYER',\n    'Name on job board: ' + (boardName || c.name),\n    'Board: ' + c.source + ' / ' + c.slug,\n    'Open jobs worldwide: ' + total + '. UK jobs: ' + ukJobs.length,\n    'UK job locations: ' + (ukLocs.join('; ') || 'none found'),\n    'Sample UK job titles: ' + (titles.join('; ') || 'none'),\n    boardAbout ? 'About (from job board): ' + boardAbout.slice(0, 1500) : '',\n    sample ? 'One UK job description (often starts with \"About us\"): ' + sample : '',\n    fetchNote,\n    '',\n    'OPTIONS',\n    'sector (main_sector: exactly one; secondary_sectors: 0-2): ' + opts('sector').join(' | '),\n    'focus_areas (0-2, only if clearly central to what the company does): ' + opts('focus_area').join(' | '),\n    'company_type (one): ' + opts('company_type').join(' | '),\n    'size_band (one, total staff): ' + opts('size_band').join(' | '),\n    '',\n    'RULES',\n    '- name: the company\\'s usual brand name (fix casing, e.g. \"AcmeTech\" not \"Acmetech\").',\n    '- description: one plain sentence on what the company does and for whom. No marketing language.',\n    '- Use what the job board says first; add your own knowledge of the company only where you are confident it is the same company.',\n    '- size_band: best estimate from what you know and the number of open jobs.',\n    '- uk_locations: UK towns or cities where it has roles, e.g. [\"London\"]. hires_remote_uk: true if any UK role is remote.',\n    '- confidence: high, medium or low. Use low if the company is unclear or the data is thin.',\n    '- review_note: empty, unless no sector fits well; then name the sector you would add.',\n    '',\n    'Return exactly: {\"name\":\"\",\"description\":\"\",\"main_sector\":\"\",\"secondary_sectors\":[],\"focus_areas\":[],\"company_type\":\"\",\"size_band\":\"\",\"uk_locations\":[],\"hires_remote_uk\":false,\"confidence\":\"\",\"review_note\":\"\"}'\n  ].filter(l => l !== '').join('\\n');\n\n  out.push({ json: { id: c.id, current_name: c.name, uk_locations_found: ukLocs, any_remote: ukJobs.some(j => /remote/i.test(j.mode || '') || /remote/i.test(j.loc || '')), prompt }, pairedItem: { item: idx } });\n  await sleep(300);\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "83ae233b-12e5-4438-abf0-2ac79cef3734",
+      "name": "Tag via Claude API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1100,
+        600
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "anthropicApi",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-haiku-5-5\", max_tokens: 700, thinking: { type: \"disabled\" }, messages: [{ role: \"user\", content: $json.prompt }] }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "anthropicApi": {
+          "id": "ANTHROPIC_CREDENTIAL_ID",
+          "name": "Anthropic account 2"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "id": "c1790358-b015-4858-aea1-d3b53b55a05b",
+      "name": "Parse + Check Tags",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1300,
+        600
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Read Claude's JSON, keep only values that are on the lists, and shape the row update.\nconst src = $('Gather Company Info').item.json;\nconst allowed = {};\nfor (const i of $('Get Lists').all()) (allowed[i.json.list_name] = allowed[i.json.list_name] || new Set()).add(i.json.value);\nconst ok = (list, v) => typeof v === 'string' && allowed[list] && allowed[list].has(v);\n\nlet t = {}; let parseError = '';\ntry {\n  const block = ($json.content || []).find(c => c.type === 'text');\n  t = JSON.parse(block.text.replace(/```json|```/g, '').trim());\n} catch (e) { parseError = 'Could not read Claude reply'; }\n\nconst notes = [];\nconst main = ok('sector', t.main_sector) ? t.main_sector : null;\nif (t.main_sector && !main) notes.push('Sector not on list: ' + t.main_sector);\nconst secondary = (t.secondary_sectors || []).filter(s => ok('sector', s) && s !== main).slice(0, 2);\nconst focus = (t.focus_areas || []).filter(s => ok('focus_area', s)).slice(0, 2);\nconst type = ok('company_type', t.company_type) ? t.company_type : null;\nconst size = ok('size_band', t.size_band) ? t.size_band : null;\nif (parseError) notes.push(parseError);\nif (t.review_note) notes.push(String(t.review_note));\n\nconst confidence = ['high', 'medium', 'low'].includes(t.confidence) ? t.confidence : 'low';\nconst locs = Array.isArray(t.uk_locations) && t.uk_locations.length ? t.uk_locations : src.uk_locations_found;\n\nreturn {\n  id: src.id,\n  name: (t.name && String(t.name).trim()) || src.current_name,\n  description: t.description || null,\n  main_sector: main,\n  secondary_sectors: secondary,\n  focus_areas: focus,\n  company_type: type,\n  size_band: size,\n  uk_locations: (locs || []).map(String).slice(0, 15),\n  hires_remote_uk: typeof t.hires_remote_uk === 'boolean' ? t.hires_remote_uk : !!src.any_remote,\n  tag_version: 1,\n  tag_confidence: confidence,\n  needs_review: !main || confidence === 'low' || notes.length > 0,\n  review_note: notes.join(' | ') || null,\n  tagged_at: new Date().toISOString()\n};"
+      }
+    },
+    {
+      "id": "cfd1bc70-8960-4ced-b9ce-7293375952dc",
+      "name": "Save Tags",
+      "type": "n8n-nodes-base.supabase",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        600
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "tableId": "companies",
+        "filterType": "manual",
+        "matchType": "allFilters",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "dataToSend": "autoMapInputData"
+      },
+      "credentials": {
+        "supabaseApi": {
+          "id": "SUPABASE_CREDENTIAL_ID",
+          "name": "Supabase account"
+        }
+      },
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000
+    },
+    {
+      "id": "c515dbf0-27c0-42a0-9919-4b6107bd02ac",
+      "name": "Batches of 10",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        700,
+        450
+      ],
+      "parameters": {
+        "batchSize": 10,
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Run Tagging": {
+      "main": [
+        [
+          {
+            "node": "Get Lists",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Lists": {
+      "main": [
+        [
+          {
+            "node": "Get Companies to Tag",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Companies to Tag": {
+      "main": [
+        [
+          {
+            "node": "Batches of 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gather Company Info": {
+      "main": [
+        [
+          {
+            "node": "Tag via Claude API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tag via Claude API": {
+      "main": [
+        [
+          {
+            "node": "Parse + Check Tags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse + Check Tags": {
+      "main": [
+        [
+          {
+            "node": "Save Tags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Tags": {
+      "main": [
+        [
+          {
+            "node": "Batches of 10",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Batches of 10": {
+      "main": [
+        [
+          {
+            "node": "Run Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Gather Company Info",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {}
+}
